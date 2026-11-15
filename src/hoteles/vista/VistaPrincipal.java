@@ -1,6 +1,8 @@
 package hoteles.vista;
 
-import hoteles.controlador.Controlador;
+import hoteles.controlador.ClienteController;
+import hoteles.controlador.HotelController;
+import hoteles.controlador.ReservaController;
 
 import java.util.NoSuchElementException;
 
@@ -12,10 +14,11 @@ public class VistaPrincipal {
     private final VistaHoteles hoteles;
     private final VistaReservas reservas;
 
-    public VistaPrincipal(Controlador controlador) {
-        this.clientes = new VistaClientes(controlador, consola);
-        this.hoteles = new VistaHoteles(controlador, consola);
-        this.reservas = new VistaReservas(controlador, consola);
+    public VistaPrincipal(ClienteController clienteController, HotelController hotelController,
+                          ReservaController reservaController) {
+        this.clientes = new VistaClientes(clienteController, reservaController, consola);
+        this.hoteles = new VistaHoteles(hotelController, consola);
+        this.reservas = new VistaReservas(reservaController, clienteController, hotelController, consola);
     }
 
     public void iniciar() {

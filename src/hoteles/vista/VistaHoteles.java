@@ -1,6 +1,6 @@
 package hoteles.vista;
 
-import hoteles.controlador.Controlador;
+import hoteles.controlador.HotelController;
 import hoteles.modelo.HotelesException;
 
 import java.math.BigDecimal;
@@ -9,10 +9,10 @@ import java.time.LocalDate;
 /** Opciones de menú relacionadas con hoteles y habitaciones. */
 public class VistaHoteles {
 
-    private final Controlador controlador;
+    private final HotelController controlador;
     private final Consola consola;
 
-    public VistaHoteles(Controlador controlador, Consola consola) {
+    public VistaHoteles(HotelController controlador, Consola consola) {
         this.controlador = controlador;
         this.consola = consola;
     }

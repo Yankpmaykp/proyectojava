@@ -1,6 +1,8 @@
 package hoteles.vista;
 
-import hoteles.controlador.Controlador;
+import hoteles.controlador.ClienteController;
+import hoteles.controlador.HotelController;
+import hoteles.controlador.ReservaController;
 import hoteles.modelo.HotelesException;
 
 import java.time.LocalDate;
@@ -10,11 +12,16 @@ import java.util.List;
 /** Opciones de menú relacionadas con las reservas. */
 public class VistaReservas {
 
-    private final Controlador controlador;
+    private final ReservaController reservas;
+    private final ClienteController clientes;
+    private final HotelController hoteles;
     private final Consola consola;
 
-    public VistaReservas(Controlador controlador, Consola consola) {
-        this.controlador = controlador;
+    public VistaReservas(ReservaController reservas, ClienteController clientes, HotelController hoteles,
+                         Consola consola) {
+        this.reservas = reservas;
+        this.clientes = clientes;
+        this.hoteles = hoteles;
         this.consola = consola;
     }
 
@@ -27,7 +34,7 @@ public class VistaReservas {
                 switch (opcion) {
                     case 1 -> nueva();
                     case 2 -> consultar();
-                    case 3 -> consola.mensaje(controlador.detalleReserva(consola.entero("Id de la reserva")));
+                    case 3 -> consola.mensaje(reservas.detalleReserva(consola.entero("Id de la reserva")));
                     case 4 -> modificar();
                     case 5 -> cancelar();
                     case 6 -> finalizar();
@@ -41,14 +48,14 @@ public class VistaReservas {
 
     /** Flujo: cliente, hotel, fechas, habitaciones disponibles, nº de personas y creación. */
     private void nueva() throws HotelesException {
-        consola.lista("Clientes", controlador.listarClientes());
+        consola.lista("Clientes", clientes.listarClientes());
         int cliente = consola.entero("Id del cliente");
-        consola.lista("Hoteles", controlador.listarHoteles());
+        consola.lista("Hoteles", hoteles.listarHoteles());
         int hotel = consola.entero("Id del hotel");
         LocalDate entrada = consola.fecha("Fecha de entrada");
         LocalDate salida = consola.fecha("Fecha de salida");
 
-        List<String> libres = controlador.habitacionesDisponibles(hotel, entrada, salida, 0);
+        List<String> libres = hoteles.habitacionesDisponibles(hotel, entrada, salida, 0);
         consola.lista("Habitaciones disponibles", libres);
         if (libres.isEmpty()) {
             return;
@@ -56,7 +63,7 @@ public class VistaReservas {
         int personas = consola.entero("Nº de personas");
         List<Integer> ids = pedirIds();
         consola.mensaje("Reserva creada:" + System.lineSeparator()
-                + controlador.crearReserva(cliente, hotel, entrada, salida, personas, ids));
+                + reservas.crearReserva(cliente, hotel, entrada, salida, personas, ids));
     }
 
     /** Pide los ids de habitación separados por comas, repitiendo hasta que todos sean números. */
@@ -83,31 +90,31 @@ public class VistaReservas {
         Integer hotel = consola.enteroOpcional("Id del hotel");
         LocalDate entrada = consola.fechaOpcional("Entrada desde");
         LocalDate salida = consola.fechaOpcional("Salida hasta");
-        String estado = consola.textoOpcional("Estado " + controlador.estadosReserva());
+        String estado = consola.textoOpcional("Estado " + reservas.estadosReserva());
         consola.lista("Reservas (ordenadas por fecha de entrada)",
-                controlador.buscarReservas(cliente, hotel, entrada, salida, estado));
+                reservas.buscarReservas(cliente, hotel, entrada, salida, estado));
     }
 
     private void modificar() throws HotelesException {
         int id = consola.entero("Id de la reserva");
-        consola.mensaje(controlador.detalleReserva(id));
+        consola.mensaje(reservas.detalleReserva(id));
         LocalDate entrada = consola.fecha("Nueva fecha de entrada");
         LocalDate salida = consola.fecha("Nueva fecha de salida");
         int personas = consola.entero("Nuevo nº de personas");
         consola.mensaje("Reserva modificada:" + System.lineSeparator()
-                + controlador.modificarReserva(id, entrada, salida, personas));
+                + reservas.modificarReserva(id, entrada, salida, personas));
     }
 
     private void cancelar() throws HotelesException {
         int id = consola.entero("Id de la reserva");
-        consola.mensaje(controlador.detalleReserva(id));
+        consola.mensaje(reservas.detalleReserva(id));
         if (consola.confirmar("¿Cancelar esta reserva?")) {
-            consola.mensaje("Reserva cancelada:" + System.lineSeparator() + controlador.cancelarReserva(id));
+            consola.mensaje("Reserva cancelada:" + System.lineSeparator() + reservas.cancelarReserva(id));
         }
     }
 
     private void finalizar() throws HotelesException {
         int id = consola.entero("Id de la reserva");
-        consola.mensaje("Reserva finalizada:" + System.lineSeparator() + controlador.finalizarReserva(id));
+        consola.mensaje("Reserva finalizada:" + System.lineSeparator() + reservas.finalizarReserva(id));
     }
 }

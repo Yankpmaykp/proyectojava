@@ -14,7 +14,8 @@ import java.util.Set;
  * Almacén de todos los datos de la aplicación y lógica que los modifica.
  * Los datos viven en estructuras dinámicas (colecciones) en memoria:
  * <ul>
- *   <li>{@link Repositorio} (TreeMap por id) para clientes, hoteles, habitaciones y reservas.</li>
+ *   <li>{@link Repositorio} (TreeMap por id) para clientes, hoteles y reservas. Las habitaciones
+ *       se guardan solo en la lista de su {@link Hotel}, sin segunda copia.</li>
  *   <li>{@link Set} (HashSet) para calcular las habitaciones ocupadas sin duplicados.</li>
  *   <li>{@link EnumMap} para el recuento de habitaciones por categoría.</li>
  * </ul>
@@ -26,7 +27,8 @@ public class Datos {
 
     private final Repositorio<Cliente> clientes = new Repositorio<>("el cliente");
     private final Repositorio<Hotel> hoteles = new Repositorio<>("el hotel");
-    private final Repositorio<Habitacion> habitaciones = new Repositorio<>("la habitación");
+    /** Las habitaciones viven solo dentro de su hotel; aquí solo se lleva el contador de ids. */
+    private int ultimoIdHabitacion = 0;
     private final Repositorio<Reserva> reservas = new Repositorio<>("la reserva");
 
     // ------------------------------------------------------------------ clientes
@@ -117,8 +119,7 @@ public class Datos {
                 throw new ElementoDuplicadoException("El hotel ya tiene una habitación " + numero + ".");
             }
         }
-        habitacion.setId(habitaciones.siguienteId());
-        habitaciones.agregar(habitacion);
+        habitacion.setId(++ultimoIdHabitacion);
         hotel.addHabitacion(habitacion);
         return habitacion;
     }
@@ -219,7 +220,7 @@ public class Datos {
         }
         Reserva reserva = new Reserva(0, cliente, hotel, entrada, salida, numPersonas);
         for (int idHabitacion : idsHabitaciones) {
-            Habitacion habitacion = habitaciones.obtener(idHabitacion);
+            Habitacion habitacion = buscarHabitacion(hotel, idHabitacion);
             if (!habitacion.isEnServicio()) {
                 throw new OperacionNoPermitidaException(
                         "La habitación " + habitacion.getNumero() + " está fuera de servicio.");
@@ -232,6 +233,15 @@ public class Datos {
         reserva.setEstado(EstadoReserva.CONFIRMADA);
         reservas.agregar(reserva);
         return reserva;
+    }
+
+    private static Habitacion buscarHabitacion(Hotel hotel, int idHabitacion) throws ElementoNoEncontradoException {
+        for (Habitacion h : hotel.getHabitaciones()) {
+            if (h.getId() == idHabitacion) {
+                return h;
+            }
+        }
+        throw new ElementoNoEncontradoException("la habitación del hotel " + hotel.getNombre(), idHabitacion);
     }
 
     /**
