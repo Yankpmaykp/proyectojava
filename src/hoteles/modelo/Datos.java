@@ -1,54 +1,60 @@
 package hoteles.modelo;
 
+import hoteles.modelo.dao.ClienteDAO;
+import hoteles.modelo.dao.DAOFactory;
+import hoteles.modelo.dao.HabitacionDAO;
+import hoteles.modelo.dao.HotelDAO;
+import hoteles.modelo.dao.ReservaDAO;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.EnumMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 /**
- * Almacén de todos los datos de la aplicación y lógica que los modifica.
- * Los datos viven en estructuras dinámicas (colecciones) en memoria:
- * <ul>
- *   <li>{@link Repositorio} (TreeMap por id) para clientes, hoteles y reservas. Las habitaciones
- *       se guardan solo en la lista de su {@link Hotel}, sin segunda copia.</li>
- *   <li>{@link Set} (HashSet) para calcular las habitaciones ocupadas sin duplicados.</li>
- *   <li>{@link EnumMap} para el recuento de habitaciones por categoría.</li>
- * </ul>
+ * Fachada del modelo: contiene las reglas de negocio y delega la persistencia en los DAOs.
+ * <p>
+ * En el Producto 2 esta clase guardaba los datos en colecciones en memoria; ahora solo conoce las
+ * interfaces DAO obtenidas de una {@link DAOFactory}, de modo que el controlador y la vista no
+ * cambian y el motor de base de datos puede sustituirse sin tocar esta clase.
+ * Las comprobaciones que dependen del estado compartido de la BD (solapamiento de reservas,
+ * estado de la reserva) se repiten en los procedimientos almacenados, dentro de una transacción,
+ * porque es el único sitio donde son seguras frente a accesos simultáneos.
  */
 public class Datos {
 
-    private static final Comparator<Reserva> ORDEN_RESERVAS =
-            Comparator.comparing(Reserva::getFechaEntrada).thenComparingInt(Reserva::getId);
+    private final ClienteDAO clienteDAO;
+    private final HotelDAO hotelDAO;
+    private final HabitacionDAO habitacionDAO;
+    private final ReservaDAO reservaDAO;
 
-    private final Repositorio<Cliente> clientes = new Repositorio<>("el cliente");
-    private final Repositorio<Hotel> hoteles = new Repositorio<>("el hotel");
-    /** Las habitaciones viven solo dentro de su hotel; aquí solo se lleva el contador de ids. */
-    private int ultimoIdHabitacion = 0;
-    private final Repositorio<Reserva> reservas = new Repositorio<>("la reserva");
+    public Datos(DAOFactory factoria) {
+        this.clienteDAO = factoria.getClienteDAO();
+        this.hotelDAO = factoria.getHotelDAO();
+        this.habitacionDAO = factoria.getHabitacionDAO();
+        this.reservaDAO = factoria.getReservaDAO();
+    }
 
     // ------------------------------------------------------------------ clientes
 
     public Cliente altaCliente(String dni, String nombre, String apellidos, String email,
                                String telefono, String direccion) throws HotelesException {
-        Cliente cliente = new Cliente(0, dni, nombre, apellidos, email, telefono, direccion);
+        Cliente cliente = new Cliente(0, dni == null ? null : dni.trim(), nombre, apellidos, email,
+                telefono, direccion);
         cliente.validar();
-        if (!clientes.buscar(c -> c.getDni().equalsIgnoreCase(dni.trim())).isEmpty()) {
+        if (clienteDAO.buscarPorDni(cliente.getDni()).isPresent()) {
             throw new ElementoDuplicadoException("Ya existe un cliente con el DNI " + dni + ".");
         }
-        cliente.setId(clientes.siguienteId());
-        clientes.agregar(cliente);
+        cliente.setId(clienteDAO.insertar(cliente));
         return cliente;
     }
 
     /** Modifica los datos del cliente; los parámetros vacíos o nulos conservan el valor actual. */
     public Cliente modificarCliente(int id, String nombre, String apellidos, String email,
                                     String telefono, String direccion) throws HotelesException {
-        Cliente actual = clientes.obtener(id);
+        Cliente actual = obtenerCliente(id);
         Cliente candidato = new Cliente(id, actual.getDni(),
                 conservar(nombre, actual.getNombre()), conservar(apellidos, actual.getApellidos()),
                 conservar(email, actual.getEmail()), conservar(telefono, actual.getTelefono()),
@@ -59,6 +65,7 @@ public class Datos {
         actual.setEmail(candidato.getEmail());
         actual.setTelefono(candidato.getTelefono());
         actual.setDireccion(candidato.getDireccion());
+        clienteDAO.actualizar(actual);
         return actual;
     }
 
@@ -66,35 +73,29 @@ public class Datos {
         return nuevo == null || nuevo.isBlank() ? actual : nuevo.trim();
     }
 
+    /** Elimina el cliente si no tiene reservas (la comprobación y el borrado van en una transacción). */
     public void eliminarCliente(int id) throws HotelesException {
-        clientes.obtener(id);
-        if (!reservas.buscar(r -> r.getCliente().getId() == id).isEmpty()) {
-            throw new OperacionNoPermitidaException(
-                    "No se puede eliminar el cliente porque tiene reservas asociadas.");
-        }
-        clientes.eliminar(id);
+        obtenerCliente(id);
+        clienteDAO.eliminar(id);
     }
 
-    public Cliente obtenerCliente(int id) throws ElementoNoEncontradoException {
-        return clientes.obtener(id);
+    public Cliente obtenerCliente(int id) throws HotelesException {
+        return clienteDAO.buscarPorId(id)
+                .orElseThrow(() -> new ElementoNoEncontradoException("el cliente", id));
     }
 
-    public List<Cliente> listarClientes() {
-        return clientes.todos();
+    public List<Cliente> listarClientes() throws HotelesException {
+        return clienteDAO.listar();
     }
 
     /** Busca por nombre o apellidos, sin distinguir mayúsculas. */
-    public List<Cliente> buscarClientes(String texto) {
-        String t = texto.trim().toLowerCase();
-        return clientes.buscar(c -> c.getNombre().toLowerCase().contains(t)
-                || c.getApellidos().toLowerCase().contains(t));
+    public List<Cliente> buscarClientes(String texto) throws HotelesException {
+        return clienteDAO.buscarPorNombre(texto);
     }
 
-    public List<Reserva> reservasDeCliente(int clienteId) throws ElementoNoEncontradoException {
-        clientes.obtener(clienteId);
-        List<Reserva> resultado = reservas.buscar(r -> r.getCliente().getId() == clienteId);
-        resultado.sort(ORDEN_RESERVAS);
-        return resultado;
+    public List<Reserva> reservasDeCliente(int clienteId) throws HotelesException {
+        obtenerCliente(clienteId);
+        return reservaDAO.buscar(clienteId, null, null, null, null);
     }
 
     // ------------------------------------------------------------------ hoteles y habitaciones
@@ -103,57 +104,58 @@ public class Datos {
                            String email, int estrellas) throws HotelesException {
         Hotel hotel = new Hotel(0, nombre, direccion, ciudad, telefono, email, estrellas);
         hotel.validar();
-        hotel.setId(hoteles.siguienteId());
-        hoteles.agregar(hotel);
+        hotel.setId(hotelDAO.insertar(hotel));
         return hotel;
     }
 
     public Habitacion altaHabitacion(int hotelId, String numero, int planta,
                                      CategoriaHabitacion categoria, BigDecimal precioNoche)
             throws HotelesException {
-        Hotel hotel = hoteles.obtener(hotelId);
-        Habitacion habitacion = new Habitacion(0, numero, planta, categoria, precioNoche, hotel);
+        Hotel hotel = obtenerHotel(hotelId);
+        Habitacion habitacion = new Habitacion(0, numero == null ? null : numero.trim(), planta,
+                categoria, precioNoche, hotel);
         habitacion.validar();
         for (Habitacion existente : hotel.getHabitaciones()) {
-            if (existente.getNumero().equalsIgnoreCase(numero.trim())) {
+            if (existente.getNumero().equalsIgnoreCase(habitacion.getNumero())) {
                 throw new ElementoDuplicadoException("El hotel ya tiene una habitación " + numero + ".");
             }
         }
-        habitacion.setId(++ultimoIdHabitacion);
+        habitacion.setId(habitacionDAO.insertar(habitacion));
         hotel.addHabitacion(habitacion);
         return habitacion;
     }
 
-    public Hotel obtenerHotel(int id) throws ElementoNoEncontradoException {
-        return hoteles.obtener(id);
+    public Hotel obtenerHotel(int id) throws HotelesException {
+        return hotelDAO.buscarPorId(id)
+                .orElseThrow(() -> new ElementoNoEncontradoException("el hotel", id));
     }
 
-    public List<Hotel> listarHoteles() {
-        return hoteles.todos();
+    public List<Hotel> listarHoteles() throws HotelesException {
+        return hotelDAO.listar();
     }
 
-    public List<Hotel> buscarHotelesPorCiudad(String ciudad) {
-        String t = ciudad.trim().toLowerCase();
-        return hoteles.buscar(h -> h.getCiudad().toLowerCase().contains(t));
+    public List<Hotel> buscarHotelesPorCiudad(String ciudad) throws HotelesException {
+        return hotelDAO.buscarPorCiudad(ciudad);
     }
 
-    public List<Habitacion> habitacionesDeHotel(int hotelId) throws ElementoNoEncontradoException {
-        return new ArrayList<>(hoteles.obtener(hotelId).getHabitaciones());
+    public List<Habitacion> habitacionesDeHotel(int hotelId) throws HotelesException {
+        return new ArrayList<>(obtenerHotel(hotelId).getHabitaciones());
     }
 
     public List<Habitacion> habitacionesPorCategoria(int hotelId, CategoriaHabitacion categoria)
-            throws ElementoNoEncontradoException {
-        return hoteles.obtener(hotelId).getHabitacionesPorCategoria(categoria);
+            throws HotelesException {
+        obtenerHotel(hotelId);
+        return habitacionDAO.listarPorCategoria(hotelId, categoria);
     }
 
     /** Número de habitaciones del hotel de cada categoría (las categorías sin habitaciones salen a 0). */
     public Map<CategoriaHabitacion, Integer> contarHabitacionesPorCategoria(int hotelId)
-            throws ElementoNoEncontradoException {
+            throws HotelesException {
         Map<CategoriaHabitacion, Integer> recuento = new EnumMap<>(CategoriaHabitacion.class);
         for (CategoriaHabitacion categoria : CategoriaHabitacion.values()) {
             recuento.put(categoria, 0);
         }
-        for (Habitacion h : hoteles.obtener(hotelId).getHabitaciones()) {
+        for (Habitacion h : obtenerHotel(hotelId).getHabitaciones()) {
             recuento.merge(h.getCategoria(), 1, Integer::sum);
         }
         return recuento;
@@ -169,34 +171,13 @@ public class Datos {
     public List<Habitacion> habitacionesDisponibles(int hotelId, LocalDate entrada, LocalDate salida,
                                                     int numPersonas) throws HotelesException {
         validarFechas(entrada, salida);
-        Hotel hotel = hoteles.obtener(hotelId);
-        Set<Integer> ocupadas = idsOcupadas(hotel, entrada, salida, 0);
-        List<Habitacion> libres = new ArrayList<>();
-        for (Habitacion h : hotel.getHabitaciones()) {
-            if (h.isEnServicio() && !ocupadas.contains(h.getId())
-                    && (numPersonas <= 0 || h.admitePersonas(numPersonas))) {
-                libres.add(h);
-            }
-        }
-        return libres;
+        obtenerHotel(hotelId);
+        return habitacionDAO.listarDisponibles(hotelId, entrada, salida, numPersonas);
     }
 
     public int contarHabitacionesDisponibles(int hotelId, LocalDate entrada, LocalDate salida)
             throws HotelesException {
         return habitacionesDisponibles(hotelId, entrada, salida, 0).size();
-    }
-
-    /** Ids de las habitaciones del hotel ocupadas en el intervalo, ignorando una reserva (0 = ninguna). */
-    private Set<Integer> idsOcupadas(Hotel hotel, LocalDate entrada, LocalDate salida, int ignorarReservaId) {
-        Set<Integer> ocupadas = new HashSet<>();
-        List<Reserva> solapadas = reservas.buscar(r -> r.getHotel().getId() == hotel.getId()
-                && r.getId() != ignorarReservaId && r.seSolapaCon(entrada, salida));
-        for (Reserva reserva : solapadas) {
-            for (LineaReserva linea : reserva.getLineas()) {
-                ocupadas.add(linea.getHabitacion().getId());
-            }
-        }
-        return ocupadas;
     }
 
     private static void validarFechas(LocalDate entrada, LocalDate salida) throws ValidacionException {
@@ -212,15 +193,16 @@ public class Datos {
 
     public Reserva crearReserva(int clienteId, int hotelId, LocalDate entrada, LocalDate salida,
                                 int numPersonas, List<Integer> idsHabitaciones) throws HotelesException {
-        Cliente cliente = clientes.obtener(clienteId);
-        Hotel hotel = hoteles.obtener(hotelId);
+        Cliente cliente = obtenerCliente(clienteId);
+        Hotel hotel = obtenerHotel(hotelId);
         validarFechas(entrada, salida);
         if (entrada.isBefore(LocalDate.now())) {
             throw new ValidacionException("La fecha de entrada no puede ser anterior a hoy.");
         }
         Reserva reserva = new Reserva(0, cliente, hotel, entrada, salida, numPersonas);
         for (int idHabitacion : idsHabitaciones) {
-            Habitacion habitacion = buscarHabitacion(hotel, idHabitacion);
+            Habitacion habitacion = habitacionDAO.buscarPorId(idHabitacion)
+                    .orElseThrow(() -> new ElementoNoEncontradoException("la habitación", idHabitacion));
             if (!habitacion.isEnServicio()) {
                 throw new OperacionNoPermitidaException(
                         "La habitación " + habitacion.getNumero() + " está fuera de servicio.");
@@ -228,20 +210,8 @@ public class Datos {
             reserva.addHabitacion(habitacion);
         }
         reserva.validar();
-        comprobarDisponibilidad(reserva, 0);
-        reserva.setId(reservas.siguienteId());
-        reserva.setEstado(EstadoReserva.CONFIRMADA);
-        reservas.agregar(reserva);
-        return reserva;
-    }
-
-    private static Habitacion buscarHabitacion(Hotel hotel, int idHabitacion) throws ElementoNoEncontradoException {
-        for (Habitacion h : hotel.getHabitaciones()) {
-            if (h.getId() == idHabitacion) {
-                return h;
-            }
-        }
-        throw new ElementoNoEncontradoException("la habitación del hotel " + hotel.getNombre(), idHabitacion);
+        int id = reservaDAO.crear(reserva);   // transacción: cabecera + líneas + control de solapamientos
+        return obtenerReserva(id);
     }
 
     /**
@@ -250,41 +220,29 @@ public class Datos {
      */
     public Reserva modificarReserva(int id, LocalDate entrada, LocalDate salida, int numPersonas)
             throws HotelesException {
-        Reserva reserva = reservas.obtener(id);
+        Reserva reserva = obtenerReserva(id);
         comprobarModificable(reserva);
-        LocalDate entradaAnterior = reserva.getFechaEntrada();
-        LocalDate salidaAnterior = reserva.getFechaSalida();
-        int personasAnteriores = reserva.getNumPersonas();
+        validarFechas(entrada, salida);
         reserva.setFechaEntrada(entrada);
         reserva.setFechaSalida(salida);
         reserva.setNumPersonas(numPersonas);
-        try {
-            validarFechas(entrada, salida);
-            reserva.validar();
-            comprobarDisponibilidad(reserva, id);
-        } catch (HotelesException e) {
-            reserva.setFechaEntrada(entradaAnterior);
-            reserva.setFechaSalida(salidaAnterior);
-            reserva.setNumPersonas(personasAnteriores);
-            throw e;
-        }
-        return reserva;
+        reserva.validar();
+        reservaDAO.modificar(id, entrada, salida, numPersonas);
+        return obtenerReserva(id);
     }
 
     public Reserva cancelarReserva(int id) throws HotelesException {
-        Reserva reserva = reservas.obtener(id);
-        comprobarModificable(reserva);
-        reserva.cancelar();
-        return reserva;
+        comprobarModificable(obtenerReserva(id));
+        reservaDAO.cancelar(id);
+        return obtenerReserva(id);
     }
 
     public Reserva finalizarReserva(int id) throws HotelesException {
-        Reserva reserva = reservas.obtener(id);
-        if (reserva.getEstado() != EstadoReserva.CONFIRMADA) {
+        if (obtenerReserva(id).getEstado() != EstadoReserva.CONFIRMADA) {
             throw new OperacionNoPermitidaException("Solo se pueden finalizar reservas confirmadas.");
         }
-        reserva.setEstado(EstadoReserva.FINALIZADA);
-        return reserva;
+        reservaDAO.finalizar(id);
+        return obtenerReserva(id);
     }
 
     private void comprobarModificable(Reserva reserva) throws OperacionNoPermitidaException {
@@ -294,20 +252,9 @@ public class Datos {
         }
     }
 
-    private void comprobarDisponibilidad(Reserva reserva, int ignorarReservaId)
-            throws HabitacionNoDisponibleException {
-        Set<Integer> ocupadas = idsOcupadas(reserva.getHotel(), reserva.getFechaEntrada(),
-                reserva.getFechaSalida(), ignorarReservaId);
-        for (LineaReserva linea : reserva.getLineas()) {
-            if (ocupadas.contains(linea.getHabitacion().getId())) {
-                throw new HabitacionNoDisponibleException(linea.getHabitacion(),
-                        reserva.getFechaEntrada(), reserva.getFechaSalida());
-            }
-        }
-    }
-
-    public Reserva obtenerReserva(int id) throws ElementoNoEncontradoException {
-        return reservas.obtener(id);
+    public Reserva obtenerReserva(int id) throws HotelesException {
+        return reservaDAO.buscarPorId(id)
+                .orElseThrow(() -> new ElementoNoEncontradoException("la reserva", id));
     }
 
     /**
@@ -316,50 +263,7 @@ public class Datos {
      * El resultado va ordenado por fecha de entrada y, a igualdad, por id.
      */
     public List<Reserva> buscarReservas(Integer clienteId, Integer hotelId, LocalDate entradaDesde,
-                                        LocalDate salidaHasta, EstadoReserva estado) {
-        List<Reserva> resultado = reservas.buscar(r ->
-                (clienteId == null || r.getCliente().getId() == clienteId)
-                        && (hotelId == null || r.getHotel().getId() == hotelId)
-                        && (entradaDesde == null || !r.getFechaEntrada().isBefore(entradaDesde))
-                        && (salidaHasta == null || !r.getFechaSalida().isAfter(salidaHasta))
-                        && (estado == null || r.getEstado() == estado));
-        resultado.sort(ORDEN_RESERVAS);
-        return resultado;
-    }
-
-    // ------------------------------------------------------------------ datos de ejemplo
-
-    /** Carga unos datos de ejemplo para poder probar la aplicación sin teclear todo a mano. */
-    public void cargarDatosDemo() {
-        try {
-            Hotel mediterraneo = altaHotel("Hotel Mediterráneo", "Av. del Mar 10", "Valencia",
-                    "961234567", "info@mediterraneo.com", 4);
-            altaHabitacion(mediterraneo.getId(), "101", 1, CategoriaHabitacion.INDIVIDUAL, new BigDecimal("55.00"));
-            altaHabitacion(mediterraneo.getId(), "102", 1, CategoriaHabitacion.DOBLE, new BigDecimal("80.00"));
-            altaHabitacion(mediterraneo.getId(), "201", 2, CategoriaHabitacion.TRIPLE, new BigDecimal("105.00"));
-            altaHabitacion(mediterraneo.getId(), "301", 3, CategoriaHabitacion.SUITE, new BigDecimal("190.00"));
-
-            Hotel castilla = altaHotel("Gran Hotel Castilla", "Plaza Mayor 3", "Madrid",
-                    "915551234", "reservas@castilla.com", 5);
-            altaHabitacion(castilla.getId(), "10", 1, CategoriaHabitacion.DOBLE, new BigDecimal("120.00"));
-            altaHabitacion(castilla.getId(), "11", 1, CategoriaHabitacion.DOBLE, new BigDecimal("120.00"));
-            altaHabitacion(castilla.getId(), "20", 2, CategoriaHabitacion.SUITE, new BigDecimal("260.00"));
-
-            Cliente ana = altaCliente("12345678Z", "Ana", "García López", "ana.garcia@email.com",
-                    "600111222", "C/ Mayor 5, Madrid");
-            Cliente luis = altaCliente("87654321X", "Luis", "Pérez Ruiz", "luis.perez@email.com",
-                    "600333444", "C/ Sol 12, Valencia");
-            altaCliente("11223344B", "Marta", "García Sanz", "marta.garcia@email.com",
-                    "600555666", "Av. Libertad 8, Sevilla");
-
-            LocalDate hoy = LocalDate.now();
-            List<Habitacion> hMed = mediterraneo.getHabitaciones();
-            crearReserva(ana.getId(), mediterraneo.getId(), hoy.plusDays(10), hoy.plusDays(13), 3,
-                    List.of(hMed.get(1).getId(), hMed.get(0).getId()));
-            crearReserva(luis.getId(), castilla.getId(), hoy.plusDays(20), hoy.plusDays(22), 2,
-                    List.of(castilla.getHabitaciones().get(0).getId()));
-        } catch (HotelesException e) {
-            throw new IllegalStateException("Los datos de ejemplo no son válidos: " + e.getMessage(), e);
-        }
+                                        LocalDate salidaHasta, EstadoReserva estado) throws HotelesException {
+        return reservaDAO.buscar(clienteId, hotelId, entradaDesde, salidaHasta, estado);
     }
 }

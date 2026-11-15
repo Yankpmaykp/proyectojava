@@ -42,7 +42,7 @@ public class VistaHoteles {
         }
     }
 
-    private int pedirHotel() {
+    private int pedirHotel() throws HotelesException {
         consola.lista("Hoteles", controlador.listarHoteles());
         return consola.entero("Id del hotel");
     }

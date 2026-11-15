@@ -37,11 +37,11 @@ public class ClienteController {
         return formatoCliente(datos.obtenerCliente(id));
     }
 
-    public List<String> listarClientes() {
+    public List<String> listarClientes() throws HotelesException {
         return formatoClientes(datos.listarClientes());
     }
 
-    public List<String> buscarClientes(String texto) {
+    public List<String> buscarClientes(String texto) throws HotelesException {
         return formatoClientes(datos.buscarClientes(texto));
     }
 

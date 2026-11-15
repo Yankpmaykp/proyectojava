@@ -6,4 +6,8 @@ public class ElementoNoEncontradoException extends HotelesException {
     public ElementoNoEncontradoException(String entidad, int id) {
         super("No existe " + entidad + " con identificador " + id + ".");
     }
+
+    public ElementoNoEncontradoException(String mensaje) {
+        super(mensaje);
+    }
 }

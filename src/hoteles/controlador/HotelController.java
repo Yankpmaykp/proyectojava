@@ -32,11 +32,11 @@ public class HotelController {
                 parseCategoria(categoria), precioNoche));
     }
 
-    public List<String> listarHoteles() {
+    public List<String> listarHoteles() throws HotelesException {
         return formatoHoteles(datos.listarHoteles());
     }
 
-    public List<String> buscarHotelesPorCiudad(String ciudad) {
+    public List<String> buscarHotelesPorCiudad(String ciudad) throws HotelesException {
         return formatoHoteles(datos.buscarHotelesPorCiudad(ciudad));
     }
 
